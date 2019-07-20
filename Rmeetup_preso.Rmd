@@ -1,0 +1,245 @@
+---
+title: "R Meetup: dplyr overview"
+author: "Michael Abla"
+date: "July 20, 2019"
+output: 
+  ioslides_presentation:
+    widescreen: true
+    smaller: false
+---
+
+```{r setup, include=FALSE} 
+
+# library
+library(dplyr)
+library(magrittr)
+
+# load data
+data("USArrests")
+force(USArrests)
+
+cities <- read.csv("UScities_simplemaps.csv", stringsAsFactors = F)
+
+```
+
+# agenda
+
+## topics
+
+- overview
+- basic functions
+- summarizing
+- joining
+- misc tips
+
+# overview
+
+## what is dplyr?
+
+- introduced by Hadley Wickham in 2014
+- derived from `plyr`
+- included in `tidyverse` package
+- mostly used for data wrangling
+- see cheat sheet [here](https://github.com/rstudio/cheatsheets/blob/master/data-transformation.pdf)
+
+## data used in this presentation
+**USArrests** data, available in base R - use `data()`
+```{r USAressts}
+names(USArrests)
+```
+**US cities** data from [simplemaps](https://simplemaps.com/data/us-cities)
+```{r cities}
+names(cities)
+```
+
+## a word about %>%
+- the package `magrittr` provides a forward-pipe operator `%>%`
+- extremely valuable operator for R coding. See example below:
+
+```{r magrittr, echo=TRUE, message=F}
+USArrests %>% summary()
+```
+
+# basic functions
+
+## popular dplyr verbs
+
+- `mutate()` adds new variables
+- `select()` picks variabes based on their names
+- `filter()` picks cases based on their values
+- `summarise()` reduces multiple values down to a single summary
+- `arrange()` changes the ordering of the rows
+- `rename()` renames variables
+- `sample_n()` and `sample_frac()` to take random samples
+
+## a word about _at, _if, _all
+
+dplyr verbs have three main variations to help with transforming multiple variables:
+
+- `_all` affects every variable
+- `_at` affects variables selected (helper function `vars()` commonly used)
+- `_if` affects variables selected based on conditions
+
+## mutate example
+
+```{r verb example 1, echo=TRUE,warning=FALSE, message=F}
+
+USArrests %>%
+  mutate(AssaultplusMurder = Assault + Murder) %>% # create new var
+  mutate_at(vars(UrbanPop, Rape), list(x100 = ~ .*100)) %>% # create multiple vars
+  head()
+```
+
+## another example of dplry verbs in action
+
+```{r verb example 2, echo=TRUE,warning=FALSE, message=F}
+
+USArrests %>%
+  mutate(State = row.names(.)) %>% # create var names state from rownames
+  select(State, Murder) %>% # select vars desired from df
+  filter(Murder > quantile(Murder, probs = .75)) %>% #filter to murders 75th+ percentile
+  arrange(desc(Murder)) # sort by highest to lowest murders
+
+```
+
+# summarizing
+
+## example of summarize
+
+```{r summarize example, echo=TRUE}
+USArrests %>%
+ summarise(murder_mean = mean(Murder),
+           murder_median = median(Murder)) 
+
+```
+## a word about group_by()
+Most data operations are done by grouping. `group_by()` takes an existing table and converts it
+into a grouped table where oprations are performed.
+
+`ungroup()` removes grouping. 
+
+## group_by + summarize powerful combo
+
+```{r summarize example2, echo=TRUE}
+USArrests$State <- row.names(USArrests) # add State var to df
+
+USArrests %>%
+  mutate(M_states = ifelse(grepl("^M", State), "Yes", "No")) %>% # identify if state starts w/ M
+  select(-State) %>%
+  group_by(M_states) %>% # summarize by M and non-M states
+  summarise_all(list(mean = mean, median = median)) %>% # summarize all
+  head()
+
+```
+
+# joining
+ 
+## dplyr joins
+
+**mutating joins** (combining variables from two data sources):
+
+  - `inner_join()`
+  - `left_join()`
+  - `right_join()`
+  - `full_join()`
+
+**filtering joins** (keeps cases from the left table and use right to filter):
+
+  - `semi_join()` retains only rows that both dfs have common AND only columns of left
+  - `anti_join()` retains only rows that are non-existent in the right AND keeps only columns of left
+
+
+## example of dplyr join in action
+
+```{r join example, echo=TRUE, message=F}
+USArrests %>%
+  inner_join(cities, by = c("State" = "state_name")) %>% #join cities df by State 
+  select(State, city, population) %>% # select vars
+  sample_n(8) #return a sample of8
+
+```
+
+## example of anti-join
+```{r join example2, echo=TRUE, message=F}
+
+# show which states listed in cities df aren't found in USArrests
+cities %>%
+  anti_join(USArrests, by = c("state_name" = "State")) %>%
+  distinct(state_name)
+```
+
+## nest_join() 
+
+With the release of dplyr 0.8, a new join function was added called `nest_join()`.
+
+`nest_join()` returns all rows and all columns from x. Adds a list column of tibbles, where
+each tibble contains all the rows from y that match that row of x. 
+
+```{r join example3, echo=TRUE, message=F}
+
+nest_example <- cities %>%
+  distinct(state_name) %>%
+  filter(state_name %in% c('Kansas', 'Missouri')) %>%
+  nest_join(USArrests, by = c("state_name" = "State")) 
+
+# create a df from the returned nest_join list
+bind_rows(nest_example$y) %>%
+  mutate(state = nest_example$state_name) %>%
+  select(state, everything()) # example of everything() usefule for column ordering
+```
+
+# misc tips
+
+## what are the top 3 largest cities in ks & mo?
+
+```{r misc example, echo=TRUE, message=F}
+USArrests %>%
+  select_if(is.character) %>% # selects State var since it's the only character var
+  inner_join(select(.data = cities, state_name, city, population), # nested select
+    by = c("State" = "state_name")) %>% # inner join 
+  group_by(State) %>% # grouping state
+  arrange(State, desc(population)) %>% # sorting
+  filter(row_number() <= 3 & State %in% c('Kansas', 'Missouri')) # filter within group
+```
+
+## how to find unqiue rows?
+
+```{r misc example2, echo=TRUE, message=F}
+cities %>%
+  select(state_name, timezone) %>%
+  distinct() %>% # remove duplicate rows
+  arrange(state_name) %>%
+  head()
+```
+
+## selecting vars starting w/ 'state' & contain 'city'
+```{r misc example3, echo=TRUE, message=F}
+cities %>%
+  select(starts_with("state"), contains("city")) %>%
+  head()
+```
+
+## tally/count shortcuts
+`tally()` is a convenient wrapper for summarise that will either call `n()` or `sum()`.`count()` is similiar but calls `group_by()`
+
+```{r misc example5, echo=TRUE, message=F}
+cities %>% tally() # shortcut for n
+```
+
+
+```{r misc example6, echo=TRUE, message=F}
+cities %>% count(state_name) %>% head(3) # shortcut for group_by + tally
+```
+
+
+## case when example (similiar to SQL)
+```{r misc example7, echo=TRUE, message=F}
+USArrests %>%
+  mutate(Murder_bin = case_when(Murder > median(.$Murder) ~ 'High',
+                                Murder == median(.$Murder) ~ 'Middle',
+                                TRUE ~ 'Low')) %>%
+  count(Murder_bin) 
+
+```
+
+# questions?
